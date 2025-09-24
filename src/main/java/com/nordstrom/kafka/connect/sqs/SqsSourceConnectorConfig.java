@@ -30,6 +30,7 @@ public class SqsSourceConnectorConfig extends SqsConnectorConfig {
   private final Boolean messageAttributesEnabled;
   private final List<String> messageAttributesList;
   private final String messageAttributePartitionKey;
+  private final String messageAttributeTopic;
 
   private static final ConfigDef CONFIG_DEF = new ConfigDef()
       .define(SqsConnectorConfigKeys.SQS_QUEUE_URL.getValue(), Type.STRING, Importance.HIGH,
@@ -58,7 +59,9 @@ public class SqsSourceConnectorConfig extends SqsConnectorConfig {
       .define(SqsConnectorConfigKeys.SQS_MESSAGE_ATTRIBUTES_INCLUDE_LIST.getValue(), Type.LIST, "", Importance.LOW,
           "The comma separated list of MessageAttribute names to be included, if empty it includes all the Message Attributes. Default is the empty string.")
       .define(SqsConnectorConfigKeys.SQS_MESSAGE_ATTRIBUTE_PARTITION_KEY.getValue(), Type.STRING, "", Importance.LOW,
-          "The name of a single AWS SQS MessageAttribute to use as the partition key");
+          "The name of a single AWS SQS MessageAttribute to use as the partition key")
+      .define(SqsConnectorConfigKeys.SQS_MESSAGE_ATTRIBUTE_TOPIC.getValue(), Type.STRING, "", Importance.LOW,
+          "The name of a single AWS SQS MessageAttribute to use as the kafka topic");
 
   public static ConfigDef config() {
     return CONFIG_DEF;
@@ -76,6 +79,7 @@ public class SqsSourceConnectorConfig extends SqsConnectorConfig {
       messageAttributesList = Collections.emptyList();
     }
     messageAttributePartitionKey = getString(SqsConnectorConfigKeys.SQS_MESSAGE_ATTRIBUTE_PARTITION_KEY.getValue());
+    messageAttributeTopic = getString(SqsConnectorConfigKeys.SQS_MESSAGE_ATTRIBUTE_TOPIC.getValue());
   }
 
   public Integer getMaxMessages() {
@@ -96,5 +100,9 @@ public class SqsSourceConnectorConfig extends SqsConnectorConfig {
 
   public String getMessageAttributePartitionKey() {
     return messageAttributePartitionKey;
+  }
+
+  public String getMessageAttributeTopic() {
+    return messageAttributeTopic;
   }
 }

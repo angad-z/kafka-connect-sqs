@@ -20,8 +20,12 @@ This project is seeking a new owner. By **November 1st, 2025**, if we cannot fin
 You can build the connector with Maven using the standard lifecycle goals:
 
 ```sh
+# change <version> in pom.xml; then -
+
 mvn clean
 mvn package
+
+# target will be in the target/plugin directory as mentioned in pom.xml
 ```
 
 ## Source connector

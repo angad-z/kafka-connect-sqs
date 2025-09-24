@@ -89,6 +89,31 @@ public class SqsSourceConnectorTask extends SourceTask {
     return messageId;
   }
 
+  private String getTopic(Message message) {
+    String topic = config.getTopics();
+    if (!config.getMessageAttributesEnabled()) {
+      return topic;
+    }
+    String messageAttributeTopic = config.getMessageAttributeTopic();
+    if (StringUtils.isBlank(messageAttributeTopic)) {
+      return topic;
+    }
+
+    // search for the String message attribute with the same name as the configured partition key
+    Map<String, MessageAttributeValue> attributes = message.getMessageAttributes();
+    for(String attributeKey: attributes.keySet()) {
+      if (!Objects.equals(attributeKey, messageAttributeTopic)) {
+        continue;
+      }
+      MessageAttributeValue attrValue = attributes.get(attributeKey);
+      if (!attrValue.getDataType().equals("String")) {
+        continue;
+      }
+      return attrValue.getStringValue();
+    }
+    return topic;
+  }
+
   /*
    * (non-Javadoc)
    * 
@@ -127,7 +152,7 @@ public class SqsSourceConnectorTask extends SourceTask {
 
       final String body = message.getBody();
       final String key = getPartitionKey(message);
-      final String topic = config.getTopics() ;
+      final String topic = getTopic(message);
 
       final ConnectHeaders headers = new ConnectHeaders();
       if (config.getMessageAttributesEnabled()) {
