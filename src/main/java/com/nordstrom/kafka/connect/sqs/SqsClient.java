@@ -51,6 +51,9 @@ public class SqsClient {
       log.error("Problem initializing provider", e);
     }
 
+	// setClientConfiguration can be used to change defaults
+	// default retries = 3 with default backoff. Max connections by default = 50
+
     final AmazonSQSClientBuilder builder = AmazonSQSClientBuilder.standard();
     if(StringUtils.isBlank(config.getEndpointUrl())) {
       builder.setRegion(config.getRegion());

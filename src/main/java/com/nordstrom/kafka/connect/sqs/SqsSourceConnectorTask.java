@@ -45,7 +45,7 @@ public class SqsSourceConnectorTask extends SourceTask {
    */
   @Override
   public String version() {
-    return About.CURRENT_VERSION ;
+	return About.CURRENT_VERSION ;
   }
 
   /*
@@ -55,63 +55,66 @@ public class SqsSourceConnectorTask extends SourceTask {
    */
   @Override
   public void start( Map<String, String> props ) {
-    log.info( "task.start" ) ;
-    Guard.verifyNotNull( props, "Task properties" ) ;
+	log.info( "task.start" ) ;
+	Guard.verifyNotNull( props, "Task properties" ) ;
 
-    config = new SqsSourceConnectorConfig( props ) ;
-    client = new SqsClient(config) ;
+	config = new SqsSourceConnectorConfig( props ) ;
+	client = new SqsClient(config) ;
 
-    log.info( "task.start.OK, sqs.queue.url={}, topics={}", config.getQueueUrl(), config.getTopics() ) ;
+	log.info( "task.start.OK, sqs.queue.url={}, topics={}", config.getQueueUrl(), config.getTopics() ) ;
   }
 
-  private String getPartitionKey(Message message) {
-    String messageId = message.getMessageId();
-    if (!config.getMessageAttributesEnabled()) {
-      return messageId;
-    }
-    String messageAttributePartitionKey = config.getMessageAttributePartitionKey();
-    if (StringUtils.isBlank(messageAttributePartitionKey)) {
-      return messageId;
-    }
+  private KafkaPropertiesDerivedFromSQSMessage getKafkaPropertiesFromMessage(Message message) {
+	KafkaPropertiesDerivedFromSQSMessage props = new KafkaPropertiesDerivedFromSQSMessage();
 
-    // search for the String message attribute with the same name as the configured partition key
-    Map<String, MessageAttributeValue> attributes = message.getMessageAttributes();
-    for(String attributeKey: attributes.keySet()) {
-      if (!Objects.equals(attributeKey, messageAttributePartitionKey)) {
-        continue;
-      }
-      MessageAttributeValue attrValue = attributes.get(attributeKey);
-      if (!attrValue.getDataType().equals("String")) {
-        continue;
-      }
-      return attrValue.getStringValue();
-    }
-    return messageId;
-  }
+	String messageId = message.getMessageId();
+	String topic = config.getTopics();
 
-  private String getTopic(Message message) {
-    String topic = config.getTopics();
-    if (!config.getMessageAttributesEnabled()) {
-      return topic;
-    }
-    String messageAttributeTopic = config.getMessageAttributeTopic();
-    if (StringUtils.isBlank(messageAttributeTopic)) {
-      return topic;
-    }
+	if (!config.getMessageAttributesEnabled()) {
+		props.setPartitionKey(messageId);
+		props.setTopic(topic);
+		return props;
+	}
 
-    // search for the String message attribute with the same name as the configured partition key
-    Map<String, MessageAttributeValue> attributes = message.getMessageAttributes();
-    for(String attributeKey: attributes.keySet()) {
-      if (!Objects.equals(attributeKey, messageAttributeTopic)) {
-        continue;
-      }
-      MessageAttributeValue attrValue = attributes.get(attributeKey);
-      if (!attrValue.getDataType().equals("String")) {
-        continue;
-      }
-      return attrValue.getStringValue();
-    }
-    return topic;
+	String messageAttributePartitionKey = config.getMessageAttributePartitionKey();
+	String messageAttributeTopic = config.getMessageAttributeTopic();
+	Boolean getCustomTopic = !StringUtils.isBlank(messageAttributeTopic);
+	Boolean getCustomPartitionKey = !StringUtils.isBlank(messageAttributePartitionKey);
+
+	props.setTopic(topic);
+	props.setPartitionKey(messageId);
+
+	if (!getCustomTopic && !getCustomPartitionKey) {
+		return props;
+	}
+
+	Boolean pkEquality = false;
+	Boolean topicEquality = false;
+
+	// search for the String message attribute with the same name as the configured partition key
+	Map<String, MessageAttributeValue> attributes = message.getMessageAttributes();
+	for(String attributeKey: attributes.keySet()) {
+
+	  pkEquality = getCustomPartitionKey && Objects.equals(attributeKey, messageAttributePartitionKey);
+	  topicEquality = getCustomTopic && Objects.equals(attributeKey, messageAttributeTopic);
+
+	  if (!pkEquality && !topicEquality) {
+	  	continue;
+	  }
+
+	  MessageAttributeValue attrValue = attributes.get(attributeKey);
+	  if (!attrValue.getDataType().equals("String")) {
+	  	continue;
+	  }
+	  if (pkEquality) {
+		props.setPartitionKey(attrValue.getStringValue());
+	  }
+	  if (topicEquality) {
+		props.setTopic(attrValue.getStringValue());
+	  }
+	}
+
+	return props;
   }
 
   /*
@@ -121,55 +124,56 @@ public class SqsSourceConnectorTask extends SourceTask {
    */
   @Override
   public List<SourceRecord> poll() throws InterruptedException {
-    log.debug( ".poll:valid-state={}", isValidState() ) ;
+	log.debug( ".poll:valid-state={}", isValidState() ) ;
 
-    if ( !isValidState() ) {
-      throw new IllegalStateException( "Task is not properly initialized" ) ;
-    }
+	if ( !isValidState() ) {
+	  throw new IllegalStateException( "Task is not properly initialized" ) ;
+	}
 
-    // Read messages from the queue.
-    List<Message> messages = client.receive(
-        config.getQueueUrl(),
-        config.getMaxMessages(),
-        config.getWaitTimeSeconds(),
-        config.getMessageAttributesEnabled(),
-        config.getMessageAttributesList());
-    log.debug( ".poll:url={}, max={}, wait={}, size={}", config.getQueueUrl(), config.getMaxMessages(),
-        config.getWaitTimeSeconds(), messages.size() ) ;
+	// Read messages from the queue.
+	List<Message> messages = client.receive(
+		config.getQueueUrl(),
+		config.getMaxMessages(),
+		config.getWaitTimeSeconds(),
+		config.getMessageAttributesEnabled(),
+		config.getMessageAttributesList());
+	log.debug( ".poll:url={}, max={}, wait={}, size={}", config.getQueueUrl(), config.getMaxMessages(),
+		config.getWaitTimeSeconds(), messages.size() ) ;
 
-    // Create a SourceRecord for each message in the queue.
-    return messages.stream().map( message -> {
+	// Create a SourceRecord for each message in the queue.
+	return messages.stream().map( message -> {
 
-      Map<String, String> sourcePartition = Collections.singletonMap( SqsConnectorConfigKeys.SQS_QUEUE_URL.getValue(),
-          config.getQueueUrl() ) ;
-      Map<String, String> sourceOffset = new HashMap<>() ;
-      // Save the message id and receipt-handle. receipt-handle is needed to delete
-      // the message once the record is committed.
-      sourceOffset.put( SqsConnectorConfigKeys.SQS_MESSAGE_ID.getValue(), message.getMessageId() ) ;
-      sourceOffset.put( SqsConnectorConfigKeys.SQS_MESSAGE_RECEIPT_HANDLE.getValue(), message.getReceiptHandle() ) ;
-      log.trace( ".poll:source-partition={}", sourcePartition ) ;
-      log.trace( ".poll:source-offset={}", sourceOffset ) ;
+	  Map<String, String> sourcePartition = Collections.singletonMap( SqsConnectorConfigKeys.SQS_QUEUE_URL.getValue(),
+		  config.getQueueUrl() ) ;
+	  Map<String, String> sourceOffset = new HashMap<>() ;
+	  // Save the message id and receipt-handle. receipt-handle is needed to delete
+	  // the message once the record is committed.
+	  sourceOffset.put( SqsConnectorConfigKeys.SQS_MESSAGE_ID.getValue(), message.getMessageId() ) ;
+	  sourceOffset.put( SqsConnectorConfigKeys.SQS_MESSAGE_RECEIPT_HANDLE.getValue(), message.getReceiptHandle() ) ;
+	  log.trace( ".poll:source-partition={}", sourcePartition ) ;
+	  log.trace( ".poll:source-offset={}", sourceOffset ) ;
 
-      final String body = message.getBody();
-      final String key = getPartitionKey(message);
-      final String topic = getTopic(message);
+	  final String body = message.getBody();
+	  final KafkaPropertiesDerivedFromSQSMessage kafkaProps = getKafkaPropertiesFromMessage(message);
+	  final String key = kafkaProps.getPartitionKey();
+	  final String topic = kafkaProps.getTopic();
 
-      final ConnectHeaders headers = new ConnectHeaders();
-      if (config.getMessageAttributesEnabled()) {
-        Map<String, MessageAttributeValue> attributes = message.getMessageAttributes();
-        // sqs api should return only the fields specified in the list
-        for(String attributeKey: attributes.keySet()) {
-          MessageAttributeValue attrValue = attributes.get(attributeKey);
-          if (attrValue.getDataType().equals("String")) {
-            SchemaAndValue schemaAndValue = new SchemaAndValue(Schema.STRING_SCHEMA, attrValue.getStringValue());
-            headers.add(attributeKey, schemaAndValue);
-          }
-        }
-      }
+	  final ConnectHeaders headers = new ConnectHeaders();
+	  if (config.getMessageAttributesEnabled()) {
+		Map<String, MessageAttributeValue> attributes = message.getMessageAttributes();
+		// sqs api should return only the fields specified in the list
+		for(String attributeKey: attributes.keySet()) {
+		  MessageAttributeValue attrValue = attributes.get(attributeKey);
+		  if (attrValue.getDataType().equals("String")) {
+			SchemaAndValue schemaAndValue = new SchemaAndValue(Schema.STRING_SCHEMA, attrValue.getStringValue());
+			headers.add(attributeKey, schemaAndValue);
+		  }
+		}
+	  }
 
-      return new SourceRecord(sourcePartition, sourceOffset, topic, null, Schema.STRING_SCHEMA, key, Schema.STRING_SCHEMA,
-          body, null, headers) ;
-    } ).collect( Collectors.toList() ) ;
+	  return new SourceRecord(sourcePartition, sourceOffset, topic, null, Schema.STRING_SCHEMA, key, Schema.STRING_SCHEMA,
+		  body, null, headers) ;
+	} ).collect( Collectors.toList() ) ;
   }
 
   /* (non-Javadoc)
@@ -177,12 +181,12 @@ public class SqsSourceConnectorTask extends SourceTask {
    */
   @Override
   public void commitRecord( SourceRecord record ) throws InterruptedException {
-    Guard.verifyNotNull( record, "record" ) ;
-    final String receipt = record.sourceOffset().get( SqsConnectorConfigKeys.SQS_MESSAGE_RECEIPT_HANDLE.getValue() )
-        .toString() ;
-    log.debug( ".commit-record:url={}, receipt-handle={}", config.getQueueUrl(), receipt ) ;
-    client.delete( config.getQueueUrl(), receipt ) ;
-    super.commitRecord( record ) ;
+	Guard.verifyNotNull( record, "record" ) ;
+	final String receipt = record.sourceOffset().get( SqsConnectorConfigKeys.SQS_MESSAGE_RECEIPT_HANDLE.getValue() )
+		.toString() ;
+	log.debug( ".commit-record:url={}, receipt-handle={}", config.getQueueUrl(), receipt ) ;
+	client.delete( config.getQueueUrl(), receipt ) ;
+	super.commitRecord( record ) ;
   }
 
   /*
@@ -192,7 +196,7 @@ public class SqsSourceConnectorTask extends SourceTask {
    */
   @Override
   public void stop() {
-    log.info( "task.stop:OK" ) ;
+	log.info( "task.stop:OK" ) ;
   }
 
   /**
@@ -202,7 +206,7 @@ public class SqsSourceConnectorTask extends SourceTask {
    * @return true if task is in a valid state.
    */
   private boolean isValidState() {
-    return null != config && null != client ;
+	return null != config && null != client ;
   }
 
 }
